@@ -17,25 +17,30 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+
+	flag "github.com/spf13/pflag"
+
 )
 
 var (
 	flAddr          string
 	flService       string
 	flUserAgent     string
+	flMetadata      []string
 	flConnTimeout   time.Duration
 	flRPCTimeout    time.Duration
 	flTLS           bool
@@ -63,6 +68,7 @@ func init() {
 	flag.StringVar(&flAddr, "addr", "", "(required) tcp host:port to connect")
 	flag.StringVar(&flService, "service", "", "service name to check (default: \"\")")
 	flag.StringVar(&flUserAgent, "user-agent", "grpc_health_probe", "user-agent header value of health check requests")
+	flag.StringArrayVar(&flMetadata, "metadata", []string{}, "Set additional headers for the health check requests")
 	// timeouts
 	flag.DurationVar(&flConnTimeout, "connect-timeout", time.Second, "timeout for establishing connection")
 	flag.DurationVar(&flRPCTimeout, "rpc-timeout", time.Second, "timeout for health check rpc")
@@ -115,10 +121,18 @@ func init() {
 	if flTLSNoVerify && flTLSServerName != "" {
 		argError("cannot specify -tls-server-name with -tls-no-verify (server name would not be used)")
 	}
+	if len(flMetadata) > 0 {
+		for _, header := range flMetadata {
+			if(len(strings.Split(header, "=")) != 2) {
+				argError("metadata %s not a valid key=value pair", header)
+			}
+		}
+	}
 
 	if flVerbose {
 		log.Printf("parsed options:")
 		log.Printf("> addr=%s conn_timeout=%v rpc_timeout=%v", flAddr, flConnTimeout, flRPCTimeout)
+		log.Printf("> metadata=%v", flMetadata)
 		log.Printf("> tls=%v", flTLS)
 		if flTLS {
 			log.Printf("  > no-verify=%v ", flTLSNoVerify)
@@ -187,6 +201,13 @@ func main() {
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	} else {
 		opts = append(opts, grpc.WithInsecure())
+	}
+
+	if len(flMetadata) > 0 {
+		for _, header := range flMetadata {
+			kv := strings.Split(header, "=")
+			ctx = metadata.AppendToOutgoingContext(ctx, kv[0], kv[1])
+		}
 	}
 
 	if flVerbose {
